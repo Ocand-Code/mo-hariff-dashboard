@@ -8,7 +8,7 @@ import { Package, Truck, CheckCircle2, Clock, AlertTriangle, Filter, Download, S
 import * as XLSX from "xlsx";
 import bundledData from "../public/data.json";
 
-const IMPORT_PASSWORD = "hariff2026"; // ganti via env NEXT_PUBLIC_IMPORT_PASSWORD jika perlu
+const IMPORT_PASSWORD = "PPIC4040"; // ganti via env NEXT_PUBLIC_IMPORT_PASSWORD jika perlu
 
 type RecordItem = {
   moNumber: string;
@@ -640,7 +640,7 @@ export default function Dashboard() {
                   <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
                   <input type="password" value={importPass} onChange={e=>setImportPass(e.target.value)} placeholder="Masukkan password" className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold"/>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">Default: <code className="bg-slate-100 px-1 rounded">hariff2026</code> (ganti di env NEXT_PUBLIC_IMPORT_PASSWORD)</p>
+                <p className="text-[11px] text-slate-400 mt-1">Password: <code className="bg-slate-100 px-1 rounded">PPIC4040</code></p>
               </div>
               <div>
                 <label className="text-xs font-bold text-navy">Pilih File Excel (.xlsx)</label>
