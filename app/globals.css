@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #0F2342;
+  --gold: #C8A96A;
+}
+body {
+  font-family: Inter, Calibri, system-ui, sans-serif;
+  background: #F4F6F9;
+}
+.card {
+  @apply bg-white rounded-xl border border-gray-100 shadow-sm;
+}
+.kpi-card {
+  @apply bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #C8A96A #F4F6F9;
+}
