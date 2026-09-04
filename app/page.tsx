@@ -4,8 +4,11 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell, Legend
 } from "recharts";
-import { Package, Truck, CheckCircle2, Clock, AlertTriangle, Filter, Download, Search, RefreshCw } from "lucide-react";
+import { Package, Truck, CheckCircle2, Clock, AlertTriangle, Filter, Download, Search, RefreshCw, Lock, Upload, X } from "lucide-react";
+import * as XLSX from "xlsx";
 import bundledData from "../public/data.json";
+
+const IMPORT_PASSWORD = "hariff2026"; // ganti via env NEXT_PUBLIC_IMPORT_PASSWORD jika perlu
 
 type RecordItem = {
   moNumber: string;
@@ -52,8 +55,38 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const pageSize = 15;
 
+  // Import modal state
+  const [showImport, setShowImport] = useState(false);
+  const [importPass, setImportPass] = useState("");
+  const [importError, setImportError] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [importFileName, setImportFileName] = useState("");
+
   useEffect(() => {
-    // try API first, fallback to static import for Vercel static
+    // 1. Cek localStorage (hasil import ber-password)
+    try {
+      const imported = localStorage.getItem("mo-hariff-imported-data");
+      if (imported) {
+        const j = JSON.parse(imported);
+        if (Array.isArray(j) && j.length) {
+          // langsung pakai data import
+          const normalized: RecordItem[] = j.map((x: any) => {
+            if ("n" in x) {
+              return {
+                moNumber: x.n || "", moDate: x.d || "", moYM: x.m || "", moM: x.m ? parseInt(x.m.split("-")[1]||"0") : 0,
+                customer: x.c || "", partNumber: x.p || "", desc1: x.desc1 || "", region: x.r || "-", qty: x.q || 0, qtyDel: x.qd || 0,
+                delDate: x.dd || "", delYM: x.dm || "", weekly: x.w || "", arriveTarget: x.at || "", onTime: x.o === 1 ? true : x.o === 0 ? false : null, area: x.area || "",
+              } as RecordItem;
+            }
+            return x as RecordItem;
+          });
+          setData(normalized);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch {}
+    // 2. try API first, fallback to static import for Vercel static
     fetch("/api/data")
       .then(r => {
         if (!r.ok) throw new Error("api not ok");
@@ -208,6 +241,116 @@ export default function Dashboard() {
     const a = document.createElement("a"); a.href=url; a.download="MO_Delivery_filtered.csv"; a.click();
   };
 
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError("");
+    if (importPass !== IMPORT_PASSWORD) {
+      setImportError("Password salah! Hubungi PPIC.");
+      return;
+    }
+    setIsImporting(true);
+    setImportFileName(file.name);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+      // Cari header row (yang mengandung MO Number)
+      let headerIdx = rows.findIndex(r => r.some((c:any) => String(c).toLowerCase().includes("mo number")));
+      if (headerIdx === -1) headerIdx = 0;
+      const header = rows[headerIdx].map((h:any) => String(h).trim());
+      const idx = (name: string) => header.findIndex((h:string) => h.toLowerCase() === name.toLowerCase());
+      const iMoNum = idx("MO Number");
+      const iMoDate = idx("MO Date");
+      const iCust = idx("Customer");
+      const iPart = idx("Part Number");
+      const iDesc1 = idx("Description 1");
+      const iRegion = idx("Region");
+      const iQty = idx("Qty");
+      const iQtyDel = idx("Qty Delivery");
+      const iDelDate = idx("Date Delivery");
+      const iArrive = idx("MO Time Arrive Target");
+      const iWeekly = idx("Weekly Delivery");
+      const iArea = idx("Area");
+
+      const toISO = (v: any) => {
+        if (v instanceof Date) return v.toISOString().slice(0,10);
+        if (typeof v === "string" && v.includes("/")) {
+          const d = new Date(v);
+          if (!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+        }
+        if (typeof v === "number") {
+          // Excel serial
+          const d = new Date(Math.round((v - 25569)*86400*1000));
+          return d.toISOString().slice(0,10);
+        }
+        return String(v||"");
+      };
+      const toYM = (s: string) => s ? s.slice(0,7) : "";
+
+      const records: any[] = [];
+      for (let r = headerIdx+1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || row.length===0) continue;
+        const moNum = String(row[iMoNum]||"").trim();
+        if (!moNum) continue;
+        const moDateStr = toISO(row[iMoDate]);
+        const delDateStr = toISO(row[iDelDate]);
+        const arriveStr = toISO(row[iArrive]);
+        let on: number|null = null;
+        if (delDateStr && arriveStr) {
+          try { on = new Date(delDateStr) <= new Date(arriveStr) ? 1 : 0; } catch {}
+        }
+        records.push({
+          n: moNum,
+          d: moDateStr,
+          m: toYM(moDateStr),
+          c: String(row[iCust]||"").trim(),
+          r: String(row[iRegion]||"-").trim(),
+          p: String(row[iPart]||"").trim(),
+          q: parseInt(String(row[iQty]||0))||0,
+          qd: parseInt(String(row[iQtyDel]||0))||0,
+          dd: delDateStr,
+          dm: toYM(delDateStr),
+          w: String(row[iWeekly]||"").trim(),
+          o: on,
+          desc1: String(row[iDesc1]||""),
+          area: String(row[iArea]||""),
+        });
+      }
+      if (records.length===0) throw new Error("Tidak ada data valid (cek header MO Number)");
+      // Simpan ke localStorage & update state
+      localStorage.setItem("mo-hariff-imported-data", JSON.stringify(records));
+      localStorage.setItem("mo-hariff-imported-at", new Date().toISOString());
+      localStorage.setItem("mo-hariff-imported-file", file.name);
+      // Update state langsung
+      const normalized: RecordItem[] = records.map((x:any) => ({
+        moNumber: x.n, moDate: x.d, moYM: x.m, moM: x.m ? parseInt(x.m.split("-")[1]||"0"):0,
+        customer: x.c, partNumber: x.p, desc1: x.desc1||"", region: x.r, qty: x.q, qtyDel: x.qd,
+        delDate: x.dd, delYM: x.dm, weekly: x.w, arriveTarget: x.at||"", onTime: x.o===1?true:x.o===0?false:null, area: x.area||""
+      }));
+      setData(normalized);
+      setShowImport(false);
+      setImportPass("");
+      setImportError("");
+      alert(`Import sukses: ${records.length} baris dari ${file.name}. Dashboard ter-update & tersimpan di browser.`);
+    } catch (err:any) {
+      setImportError("Gagal import: " + (err.message||String(err)));
+    } finally {
+      setIsImporting(false);
+      e.target.value = "";
+    }
+  };
+
+  const handleResetImport = () => {
+    localStorage.removeItem("mo-hariff-imported-data");
+    localStorage.removeItem("mo-hariff-imported-at");
+    localStorage.removeItem("mo-hariff-imported-file");
+    location.reload();
+  };
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-[#F4F6F9]">
       <div className="text-center">
@@ -268,6 +411,7 @@ export default function Dashboard() {
             </div>
             <button onClick={()=>{setRegionFilter("All"); setCustomerFilter("All"); setPeriodFilter("All"); setSearch(""); setPage(1)}} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg">↺ Reset</button>
             <button onClick={exportCSV} className="text-xs bg-navy text-white px-4 py-2 rounded-lg flex items-center gap-1 hover:bg-navy2"><Download size={14}/> Export CSV</button>
+            <button onClick={()=>setShowImport(true)} className="text-xs bg-gold text-navy px-4 py-2 rounded-lg flex items-center gap-1 hover:bg-goldDark font-bold"><Lock size={14}/> Import Excel</button>
           </div>
         </div>
         <div className="text-xs text-slate-500 mt-2 px-1">Menampilkan <b>{formatNum(kpi.totalRows)}</b> dari 20.221 records • {kpi.totalMO} MO dokumen • Filter aktif: <span className="text-navy font-semibold">{regionFilter} / {customerFilter} / {periodFilter}</span></div>
@@ -471,8 +615,52 @@ export default function Dashboard() {
         </div>
         <div className="text-center text-[11px] text-slate-400 mt-4">
           CONFIDENTIAL • PPIC HARIFF DTE • Dashboard Live Vercel • Data otomatis dari Report Material Order.xlsx (20.221 rows) • Elegant, profesional, detail & informatif
+          {typeof window !== "undefined" && localStorage.getItem("mo-hariff-imported-data") && (
+            <span className="ml-2 text-goldDark">• Import aktif: {localStorage.getItem("mo-hariff-imported-file")} ({new Date(localStorage.getItem("mo-hariff-imported-at")||"").toLocaleString("id-ID")}) <button onClick={handleResetImport} className="underline ml-1">Reset</button></span>
+          )}
         </div>
       </div>
+
+      {/* Import Modal */}
+      {showImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm" onClick={()=>setShowImport(false)}></div>
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-navy text-white p-4 flex items-center justify-between">
+              <h3 className="font-bold flex items-center gap-2"><Lock size={16} className="text-gold"/> Import Excel (Protected)</h3>
+              <button onClick={()=>setShowImport(false)} className="p-1 hover:bg-white/10 rounded"><X size={18}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                Hanya user dengan password yang bisa update data dashboard. File harus format <b>Report Material Order.xlsx</b> (Sheet1, header MO Number). Data akan tersimpan di browser & langsung tampil.
+              </div>
+              <div>
+                <label className="text-xs font-bold text-navy">Password</label>
+                <div className="relative mt-1">
+                  <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                  <input type="password" value={importPass} onChange={e=>setImportPass(e.target.value)} placeholder="Masukkan password" className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gold"/>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Default: <code className="bg-slate-100 px-1 rounded">hariff2026</code> (ganti di env NEXT_PUBLIC_IMPORT_PASSWORD)</p>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-navy">Pilih File Excel (.xlsx)</label>
+                <label className="mt-1 flex items-center justify-center w-full border-2 border-dashed border-gold/40 rounded-lg p-4 cursor-pointer hover:bg-gold/5 bg-[#FFFBEB]">
+                  <Upload size={18} className="text-goldDark mr-2"/>
+                  <span className="text-sm text-navy font-semibold">{importFileName || "Klik untuk pilih file"}</span>
+                  <input type="file" accept=".xlsx,.xls,.xlsm" className="hidden" onChange={handleImportFile} disabled={isImporting}/>
+                </label>
+                {isImporting && <p className="text-xs text-blue-600 mt-2 flex items-center gap-1"><RefreshCw size={12} className="animate-spin"/> Memproses {importFileName}...</p>}
+                {importError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2 mt-2">{importError}</p>}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>setShowImport(false)} className="flex-1 py-2 border border-gray-300 rounded-lg text-sm">Batal</button>
+                <button onClick={()=>document.querySelector<HTMLInputElement>('input[type=\"file\"]')?.click()} disabled={isImporting} className="flex-1 py-2 bg-gold text-navy rounded-lg text-sm font-bold disabled:opacity-50">Pilih File</button>
+              </div>
+              <p className="text-[11px] text-slate-400 text-center">Data import tersimpan di <code>localStorage</code>. Untuk kembali ke data server, klik Reset di footer.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
