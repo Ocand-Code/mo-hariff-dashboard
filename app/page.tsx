@@ -5,6 +5,7 @@ import {
   LineChart, Line, PieChart, Pie, Cell, Legend
 } from "recharts";
 import { Package, Truck, CheckCircle2, Clock, AlertTriangle, Filter, Download, Search, RefreshCw } from "lucide-react";
+import bundledData from "../public/data.json";
 
 type RecordItem = {
   moNumber: string;
@@ -52,8 +53,33 @@ export default function Dashboard() {
   const pageSize = 15;
 
   useEffect(() => {
+    // try API first, fallback to static import for Vercel static
     fetch("/api/data")
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error("api not ok");
+        const ct = r.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) throw new Error("not json");
+        return r.json();
+      })
+      .then((j: any[]) => {
+        // check if j is actually HTML string
+        if (Array.isArray(j) && j.length && typeof j[0] === "object" && "n" in j[0]) {
+          return j;
+        }
+        throw new Error("invalid data");
+      })
+      .catch(() => {
+        // fallback: fetch static public/data.json directly
+        return fetch("/data.json").then(r => {
+          if (!r.ok) throw new Error("fallback not ok");
+          const ct2 = r.headers.get("content-type") || "";
+          if (!ct2.includes("application/json")) throw new Error("not json2");
+          return r.json();
+        }).catch(() => {
+          // ultimate fallback: use bundled data (client-side import, ~3.8MB)
+          return bundledData as any;
+        });
+      })
       .then((j: any[]) => {
         // support both long and short keys (compressed)
         const normalized: RecordItem[] = j.map((x: any) => {
